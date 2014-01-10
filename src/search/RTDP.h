@@ -32,6 +32,8 @@ struct RTDP : public RTDPCore {
 
   void trialRecurse(MDPNode& cn, int depth);
   bool doTrial(MDPNode& cn);
+  int maxDepth;
+  double maxTimeCompute;
 };
 
 }; // namespace zmdp

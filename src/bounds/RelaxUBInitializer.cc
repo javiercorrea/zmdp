@@ -61,15 +61,15 @@ void RelaxUBInitializer::setup(double targetPrecision)
 
 MDPNode* RelaxUBInitializer::getNode(const state_vector& s)
 {
-  string hs = hashable(s);
-  MDPHash::iterator pr = lookup->find(hs);
+//  string hs = hashable(s);
+  MDPHash::iterator pr = lookup->find(s);
   if (lookup->end() == pr) {
     // create a new fringe node
     MDPNode& cn = *(new MDPNode);
     cn.s = s;
     cn.lbVal = initLowerBound->getValue(s, NULL);
     cn.ubVal = initUpperBound->getValue(s, NULL);
-    (*lookup)[hs] = &cn;
+    (*lookup)[s] = &cn;
     return &cn;
   } else {
     // return existing node

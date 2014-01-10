@@ -24,6 +24,8 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <assert.h>
+#include <cstdlib>
+#include <cmath>
 
 #include <iostream>
 #include <fstream>
@@ -66,6 +68,7 @@ void BoundPair::updateDualPointBounds(MDPNode& cn, int* maxUBActionP)
   double maxUBVal = -99e+20;
   int maxUBAction = -1;
 
+  int num_elements = 1;
   FOR (a, cn.getNumActions()) {
     MDPQEntry& Qa = cn.Q[a];
     lbVal = 0;
@@ -73,14 +76,22 @@ void BoundPair::updateDualPointBounds(MDPNode& cn, int* maxUBActionP)
     FOR (o, Qa.getNumOutcomes()) {
       MDPEdge* e = Qa.outcomes[o];
       if (NULL != e) {
-	MDPNode& sn = *e->nextState;
-	double oprob = e->obsProb;
-	lbVal += oprob * sn.lbVal;
-	ubVal += oprob * sn.ubVal;
+        MDPNode& sn = *e->nextState;
+        double oprob = e->obsProb;
+        if(sn.lbVal > sn.ubVal) {
+          std::cerr << "ERROR!!! isFringe()? " << (sn.isFringe()? "YES":"NO") << std::endl;
+          assert(false);
+        }
+        lbVal += oprob * sn.lbVal;
+        ubVal += oprob * sn.ubVal;
       }
     }
     lbVal = Qa.immediateReward + problem->getDiscount() * lbVal;
     ubVal = Qa.immediateReward + problem->getDiscount() * ubVal;
+    if(lbVal > ubVal || !std::isfinite(ubVal) || !std::isfinite(lbVal)) {
+      std::cerr << "ERROR!!! at node " << sparseRep(cn.s) << std::endl;
+      assert(false);
+    }
     Qa.lbVal = lbVal;
     Qa.ubVal = ubVal;
 
@@ -88,14 +99,26 @@ void BoundPair::updateDualPointBounds(MDPNode& cn, int* maxUBActionP)
     if (ubVal > maxUBVal) {
       maxUBVal = ubVal;
       maxUBAction = a;
+      num_elements = 1;
+    }
+    else if(ubVal == maxUBVal) {
+      num_elements++;
+      // Reservoir sample to avoid going for the same action all the time
+      int j = rand() % num_elements;
+      // Replace
+      if(j == 0) {
+        maxUBAction = a;
+      }
     }
   }
-#if 1
+#if 0
   cn.lbVal = std::max(cn.lbVal, maxLBVal);
   cn.ubVal = std::min(cn.ubVal, maxUBVal);
+  assert(cn.lbVal <= cn.ubVal);
 #else
   cn.lbVal = maxLBVal;
   cn.ubVal = maxUBVal;
+  assert(cn.lbVal <= cn.ubVal);
 #endif
 
   if (NULL != maxUBActionP) *maxUBActionP = maxUBAction;
@@ -133,8 +156,8 @@ MDPNode* BoundPair::getRootNode(void)
 
 MDPNode* BoundPair::getNode(const state_vector& s)
 {
-  string hs = hashable(s);
-  MDPHash::iterator pr = lookup->find(hs);
+//  string hs = hashable(s);
+  MDPHash::iterator pr = lookup->find(s);
   if (lookup->end() == pr) {
     // create a new fringe node
     MDPNode& cn = *(new MDPNode);
@@ -153,7 +176,11 @@ MDPNode* BoundPair::getNode(const state_vector& s)
     } else {
       cn.lbVal = -1; // n/a
     }
-    (*lookup)[hs] = &cn;
+    if(cn.ubVal < cn.lbVal || !std::isfinite(cn.ubVal) || !std::isfinite(cn.lbVal)) {
+      std::cerr << "HERE lb: " << cn.lbVal << " ub: " << cn.ubVal << " for node " << sparseRep(cn.s) << std::endl;
+      assert(false);
+    }
+    (*lookup)[s] = &cn;
 
     FOR_EACH (hstructP, getNodeHandlers) {
       (*hstructP->h)(cn, hstructP->hdata);
@@ -169,7 +196,7 @@ MDPNode* BoundPair::getNode(const state_vector& s)
 
 MDPNode* BoundPair::getNodeOrNull(const state_vector& s) const
 {
-  typeof(lookup->begin()) pr = lookup->find(hashable(s));
+  typeof(lookup->begin()) pr = lookup->find(s);
   if (lookup->end() == pr) {
     return NULL;
   } else {
@@ -191,7 +218,7 @@ void BoundPair::expand(MDPNode& cn)
     FOR (o, opv.size()) {
       double oprob = opv(o);
       if (oprob > OBS_IS_ZERO_EPS) {
-	MDPEdge* e = new MDPEdge();
+        MDPEdge* e = new MDPEdge();
         Qa.outcomes[o] = e;
         e->obsProb = oprob;
         e->nextState = getNode(problem->getNextState(sp, cn.s, a, o));

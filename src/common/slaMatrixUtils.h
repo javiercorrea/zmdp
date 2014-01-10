@@ -35,6 +35,7 @@
 #include <vector>
 #include <algorithm>
 #include <functional>
+#include <boost/functional/hash.hpp>
 
 #include "zmdpCommonDefs.h"
 #include "zmdpCommonTypes.h"

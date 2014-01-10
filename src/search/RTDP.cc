@@ -57,7 +57,13 @@ using namespace MatrixUtils;
 
 namespace zmdp {
 
-RTDP::RTDP(void)
+struct trialRecurseStackRTDP {
+  MDPNode *cn;
+  double logOcc;
+  int depth;
+};
+
+RTDP::RTDP(void): maxDepth(100), maxTimeCompute(10.0)
 {}
 
 void RTDP::trialRecurse(MDPNode& cn, int depth)
@@ -76,6 +82,7 @@ void RTDP::trialRecurse(MDPNode& cn, int depth)
   bounds->update(cn, &maxUBAction);
   trackBackup(cn);
 
+#if 0
   int simulatedOutcome = bounds->getSimulatedOutcome(cn, maxUBAction);
 
   if (zmdpDebugLevelG >= 1) {
@@ -86,7 +93,10 @@ void RTDP::trialRecurse(MDPNode& cn, int depth)
 
   // recurse to successor
   trialRecurse(cn.getNextState(maxUBAction, simulatedOutcome), depth+1);
-
+#else
+  // recurse to successor
+  trialRecurse(*cn.sampleNextState(maxUBAction), depth+1);
+#endif
   bounds->update(cn, NULL);
   trackBackup(cn);
 }
@@ -97,7 +107,71 @@ bool RTDP::doTrial(MDPNode& cn)
     printf("-*- doTrial: trial %d\n", (numTrials+1));
   }
 
-  trialRecurse(cn, 0);
+//  trialRecurse(cn, 0);
+  stack<trialRecurseStackRTDP> callStack;
+  trialRecurseStackRTDP start;
+  start.cn = &cn;
+  start.logOcc = log(1.0);
+  start.depth = 0;
+  callStack.push(start);
+  stack<MDPNode*> updateStack;
+
+  double startTime = timevalToSeconds(getTime());
+  double elapsed = timevalToSeconds(getTime())-startTime;
+  while(!callStack.empty() && elapsed < maxTimeCompute) {
+    trialRecurseStackRTDP current = callStack.top();
+    callStack.pop();
+    // check for termination
+    if (current.cn->isTerminal || current.depth > maxDepth) {
+      if (zmdpDebugLevelG >= 1) {
+        printf("trialRecurse: depth=%d ubVal=%g terminal node (terminating)\n",
+         current.depth, current.cn->ubVal);
+      }
+      continue;
+    }
+
+    // cached Q values must be up to date for subsequent calls
+    int maxUBAction;
+    bounds->update(*current.cn, &maxUBAction);
+    trackBackup(*current.cn);
+#if 0
+    int simulatedOutcome = bounds->getSimulatedOutcome(cn, maxUBAction);
+
+    if (zmdpDebugLevelG >= 1) {
+      printf("  trialRecurse: depth=%d a=%d o=%d ubVal=%g\n",
+       current.depth, maxUBAction, simulatedOutcome, current.cn->ubVal);
+      printf("  trialRecurse: s=%s\n", sparseRep(cn.s).c_str());
+    }
+    // recurse to successor
+    // Calculate the new state to do trial recurse on
+    trialRecurseStackRTDP new_state;
+    new_state.cn = &cn.getNextState(maxUBAction, simulatedOutcome);
+    new_state.logOcc = current.logOcc;
+    new_state.depth = current.depth + 1;
+    // Put new state on the call stack
+    callStack.push(new_state);
+    // Put current state on the update stack
+    updateStack.push(current.cn);
+#else
+    // recurse to successor
+    // Calculate the new state to do trial recurse on
+    trialRecurseStackRTDP new_state;
+    new_state.cn = current.cn->sampleNextState(maxUBAction);
+    new_state.logOcc = current.logOcc;
+    new_state.depth = current.depth + 1;
+    // Put new state on the call stack
+    callStack.push(new_state);
+    // Put current state on the update stack
+    updateStack.push(current.cn);
+#endif
+    elapsed = timevalToSeconds(getTime())-startTime;
+  }
+
+  while(!updateStack.empty()) {
+    bounds->update(*updateStack.top(), NULL);
+    trackBackup(*updateStack.top());
+    updateStack.pop();
+  }
   numTrials++;
 
   return false;

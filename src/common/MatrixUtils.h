@@ -35,6 +35,7 @@
 #include <vector>
 #include <algorithm>
 #include <functional>
+#include <string>
 #include <sstream>
 
 #include "zmdpCommonDefs.h"
@@ -68,8 +69,8 @@ namespace MatrixUtils {
   int chooseFromDistribution(const cvector& b);
 
   // Returns a string representation of b, suitable for hashing
-  const char* hashable(const dvector& b);
-  const char* hashable(const cvector& b);
+  std::string hashable(const dvector& b);
+  std::string hashable(const cvector& b);
 
   // Calculates the average and standard deviation for a collection.
   template <class _ForwardIterator>
@@ -199,42 +200,22 @@ namespace MatrixUtils {
     return 0;
   }
 
-  inline const char* hashable(const dvector& b)
+  inline std::string hashable(const dvector& b)
   {
-    static char *buf = NULL;
-    static unsigned int n = 0;
-
-    if (b.size() > n) {
-      n = b.size();
-      if (NULL != buf) delete[] buf;
-      buf = new char[n*HASH_VECTOR_LEN+1];
-    }
-
-    char *pos = buf;
+    std::ostringstream out;
     FOR (i, b.size()) {
-      pos += snprintf(pos, HASH_VECTOR_LEN, HASH_VECTOR_PRECISION,
-		      i, b(i));
+      out << i << ":" << b(i);
     }
-    return buf;
+    return out.str();
   }
 
-  inline const char* hashable(const cvector& b)
+  inline std::string hashable(const cvector& b)
   {
-    static char *buf = NULL;
-    static unsigned int n = 0;
-
-    if (b.size() > n) {
-      n = b.size();
-      if (NULL != buf) delete[] buf;
-      buf = new char[n*HASH_VECTOR_LEN+1];
-    }
-
-    char *pos = buf;
+    std::ostringstream out;
     FOR_CV (b) {
-      pos += snprintf(pos, HASH_VECTOR_LEN, HASH_VECTOR_PRECISION,
-		      CV_INDEX(b), CV_VAL(b));
+      out << CV_INDEX(b) << ":" <<  CV_VAL(b);
     }
-    return buf;
+    return out.str();
   }
 
   // Calculates the average and standard deviation for a collection.

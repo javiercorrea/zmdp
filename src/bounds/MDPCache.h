@@ -27,6 +27,8 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <cstdlib>
+#include <boost/unordered_map.hpp>
 
 #include "zmdpCommonDefs.h"
 #include "zmdpCommonTypes.h"
@@ -60,12 +62,31 @@ struct MDPNode {
   void* searchData;
   void* boundsData;
 
-  bool isFringe(void) const { return Q.empty(); }
-  size_t getNumActions(void) const { return Q.size(); }
-  MDPNode& getNextState(int a, int o) { return *Q[a].outcomes[o]->nextState; }
+  inline bool isFringe(void) const { return Q.empty(); }
+  inline size_t getNumActions(void) const { return Q.size(); }
+  inline MDPNode& getNextState(int a, int o) { return *Q[a].outcomes[o]->nextState; }
+  inline MDPNode* sampleNextState(int a) { 
+    double total = 0.0;
+    FOR(o, Q[a].getNumOutcomes()) {
+      if(Q[a].outcomes[o] != NULL) {
+        total += Q[a].outcomes[o]->obsProb;
+      }
+    }
+    double pick = total*(double)std::rand() / RAND_MAX;
+    FOR(o, Q[a].getNumOutcomes()) {
+      if(Q[a].outcomes[o] == NULL)
+        continue;
+      pick -= Q[a].outcomes[o]->obsProb;
+      if(pick <= 0)
+        return Q[a].outcomes[o]->nextState;
+    }
+    // Shoulnd't get here
+    return Q[a].outcomes[Q[a].getNumOutcomes()-1]->nextState;
+  }
 };
 
-typedef EXT_NAMESPACE::hash_map<std::string, MDPNode*> MDPHash;
+//typedef EXT_NAMESPACE::hash_map<std::string, MDPNode*> MDPHash;
+typedef boost::unordered_map<sla::cvector, MDPNode*> MDPHash;
 
 int getNodeCacheStorage(const MDPHash* lookup, int whichMetric);
 

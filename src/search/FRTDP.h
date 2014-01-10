@@ -45,6 +45,8 @@ struct FRTDP : public RTDPCore {
   int oldNumUpdates;
   double newQualitySum;
   int newNumUpdates;
+  bool stop;
+  double maxTimeCompute;
 
   FRTDP(void);
 
@@ -55,6 +57,7 @@ struct FRTDP : public RTDPCore {
   void update(MDPNode& cn, FRTDPUpdateResult& result);
   void trialRecurse(MDPNode& cn, double logOcc, int depth);
   bool doTrial(MDPNode& cn);
+  void doTrialFixed(MDPNode& cn, std::vector<int> actions, std::vector<int> outcomes);
   void derivedClassInit(void);
 };
 

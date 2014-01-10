@@ -30,6 +30,7 @@
 #include <iostream>
 #include <fstream>
 #include <algorithm>
+#include <boost/functional/hash.hpp>
 
 #include "zmdpCommonDefs.h"
 
@@ -1237,22 +1238,22 @@ namespace sla {
 
     while (1) {
       if (xind < yind) {
-	// x(xind) == xi->value, y(xind) == 0
-	if (xi->value < -eps) return false;
-	xi++;
-	CHECK_X();
+        // x(xind) == xi->value, y(xind) == 0
+        if (xi->value < -eps) return false;
+        xi++;
+        CHECK_X();
       } else if (xind == yind) {
-	// x(xind) == xi->value, y(xind) == yi->value
-	if (xi->value < yi->value - eps) return false;
-	xi++;
-	yi++;
-	CHECK_X();
-	CHECK_Y();
+        // x(xind) == xi->value, y(xind) == yi->value
+        if (xi->value < yi->value - eps) return false;
+        xi++;
+        yi++;
+        CHECK_X();
+        CHECK_Y();
       } else {
-	// x(yind) == 0, y(yind) == yi->value
-	if (0 < yi->value - eps) return false;
-	yi++;
-	CHECK_Y();
+        // x(yind) == 0, y(yind) == yi->value
+        if (0 < yi->value - eps) return false;
+        yi++;
+        CHECK_Y();
       }
     }
 
@@ -1296,6 +1297,49 @@ namespace sla {
     out.close();
   }
 			  
+  // Additions to use directly cvector instead of sparsRep for
+  // hash tables
+  inline size_t hash_value(const cvector &v) {
+    int r = 0;
+    for(size_t i = 0; i < v.data.size(); i++) {
+      r += (v.data[i].index+1) * v.data[i].value;
+    }
+    boost::hash<int> hasher;
+    return hasher(r);
+  }
+
+  struct IndPair {
+    int ind;
+    double val;
+    IndPair(int _ind, double _val) : ind(_ind), val(_val) {}
+  };
+  
+  struct ValGreater {
+    bool operator()(const IndPair& lhs, const IndPair& rhs) {
+      return lhs.val > rhs.val;
+    }
+  };
+  inline bool operator==(const cvector &a, const cvector &b) {
+    if(a.data.size() != b.data.size())
+      return false;
+    const size_t n = a.data.size();
+    std::vector<IndPair> sorteda, sortedb;
+    for(size_t i = 0; i < n; i++) {
+      sorteda.push_back(IndPair(a.data[i].index, a.data[i].value));
+    }
+    for(size_t i = 0; i < n; i++) {
+      sortedb.push_back(IndPair(b.data[i].index, b.data[i].value));
+    }
+    sort(sorteda.begin(), sorteda.end(), ValGreater());
+    sort(sortedb.begin(), sortedb.end(), ValGreater());
+    for(size_t i = 0; i < n; i++) {
+      if(sorteda[i].ind != sortedb[i].ind
+          || sorteda[i].val != sortedb[i].val) {
+        return false;
+      }
+    }
+    return true;
+  }
 } // namespace sla
 
 /**********************************************************************

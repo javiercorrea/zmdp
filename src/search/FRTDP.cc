@@ -28,6 +28,7 @@
 #include <iostream>
 #include <fstream>
 #include <queue>
+#include <stack>
 
 #include "zmdpCommonDefs.h"
 #include "zmdpCommonTime.h"
@@ -39,7 +40,7 @@ using namespace std;
 using namespace sla;
 using namespace MatrixUtils;
 
-#define FRTDP_INIT_MAX_DEPTH (10)
+#define FRTDP_INIT_MAX_DEPTH (500)
 #define FRTDP_MAX_DEPTH_ADJUST_RATIO (1.1)
 #define FRTDP_QUALITY_MARGIN (1e-5)
 
@@ -49,6 +50,7 @@ FRTDP::FRTDP(void)
 {
   oldMaxDepth = 0;
   maxDepth = FRTDP_INIT_MAX_DEPTH;
+  maxTimeCompute = 10.0;
 }
 
 void FRTDP::getNodeHandler(MDPNode& cn)
@@ -76,13 +78,27 @@ void FRTDP::getMaxPrioOutcome(MDPNode& cn, int a, FRTDPUpdateResult& r) const
   r.maxPrioOutcome = -1;
   double prio;
   MDPQEntry& Qa = cn.Q[a];
+  int num_elements = 1;
   FOR (o, Qa.getNumOutcomes()) {
     MDPEdge* e = Qa.outcomes[o];
     if (NULL != e) {
       prio = log(problem->getDiscount() * e->obsProb) + getPrio(*e->nextState);
-      if (prio > r.maxPrio) {
-	r.maxPrio = prio;
-	r.maxPrioOutcome = o;
+      if (zmdpDebugLevelG >= 1) {
+        printf("    a=%d o=%d prio=%f=%f+%f\n", a, o, prio, log(problem->getDiscount() * e->obsProb), getPrio(*e->nextState));
+      }
+      if(prio > r.maxPrio) {
+        r.maxPrio = prio;
+        r.maxPrioOutcome = o;
+        num_elements = 1;
+      }
+      else if(prio == r.maxPrio) {
+        num_elements++;
+        // Reservoir sample to avoid going for the same action all the time
+        int j = rand() % num_elements;
+        // Replace
+        if(j == 0) {
+          r.maxPrioOutcome = o;
+        }
       }
 #if 0
       MDPNode& sn = *e->nextState;
@@ -117,6 +133,9 @@ void FRTDP::update(MDPNode& cn, FRTDPUpdateResult& r)
 
 void FRTDP::trialRecurse(MDPNode& cn, double logOcc, int depth)
 {
+  if (zmdpDebugLevelG >= 1) {
+    printf("  trialRecurse called: s=%s\n", sparseRep(cn.s).c_str());
+  }
   FRTDPUpdateResult r;
   update(cn, r);
 
@@ -166,11 +185,20 @@ void FRTDP::trialRecurse(MDPNode& cn, double logOcc, int depth)
   double obsProb = cn.Q[r.maxUBAction].outcomes[r.maxPrioOutcome]->obsProb;
   double weight = problem->getDiscount() * obsProb;
   double nextLogOcc = logOcc + log(weight);
+  if (zmdpDebugLevelG >= 1) {
+    printf("  trialRecurse recursing from: s=%s with action=%d outcome=%d\n", sparseRep(cn.s).c_str(), r.maxUBAction, r.maxPrioOutcome);
+  }
   trialRecurse(cn.getNextState(r.maxUBAction, r.maxPrioOutcome),
 	       nextLogOcc, depth+1);
 
   update(cn, r);
 }
+
+struct trialRecurseStackFRTPD {
+  MDPNode *cn;
+  double logOcc;
+  int depth;
+};
 
 bool FRTDP::doTrial(MDPNode& cn)
 {
@@ -183,9 +211,100 @@ bool FRTDP::doTrial(MDPNode& cn)
   newQualitySum = 0;
   newNumUpdates = 0;
 
-  trialRecurse(cn,
-	       /* logOcc = */ log(1.0),
-	       /* depth = */ 0);
+  stack<trialRecurseStackFRTPD> callStack;
+  trialRecurseStackFRTPD start;
+  start.cn = &cn;
+  start.logOcc = log(1.0);
+  start.depth = 0;
+  callStack.push(start);
+  stack<MDPNode*> updateStack;
+
+  stop = false;
+  double startTime = timevalToSeconds(getTime());
+  double elapsed = timevalToSeconds(getTime())-startTime;
+  while(!callStack.empty() && elapsed < maxTimeCompute) {
+    trialRecurseStackFRTPD current = callStack.top();
+    callStack.pop();
+    FRTDPUpdateResult r;
+
+    if (zmdpDebugLevelG >= 1) {
+      printf("  trialRecurse called: s=%s\n", sparseRep(cn.s).c_str());
+    }
+    update(*current.cn, r);
+
+    double excessWidth = current.cn->ubVal - current.cn->lbVal - RT_PRIO_IMPROVEMENT_CONSTANT * targetPrecision;
+    double occ = (current.logOcc < -50) ? 0 : exp(current.logOcc);
+    double updateQuality = r.ubResidual * occ;
+
+  #if 0
+    // now done in update() itself
+    getPrio(cn) = std::min(getPrio(cn), (excessWidth <= 0)
+         ? RT_PRIO_MINUS_INFINITY : log(excessWidth));
+  #endif
+
+    if (zmdpDebugLevelG >= 1) {
+      printf("  trialRecurse: depth=%d [%g .. %g] a=%d o=%d\n",
+       current.depth, current.cn->lbVal, current.cn->ubVal, r.maxUBAction, r.maxPrioOutcome);
+      printf("  trialRecurse: s=%s\n", sparseRep(current.cn->s).c_str());
+    }
+
+  #if 0
+    printf("  tr: maxUBAction=%d ubResidual=%g\n",
+     r.maxUBAction, r.ubResidual);
+    printf("  tr: maxPrioOutcome=%d maxPrio=%g\n",
+     r.maxPrioOutcome, r.maxPrio);
+  #endif
+
+    if (current.depth > oldMaxDepth) {
+      newQualitySum += updateQuality;
+      newNumUpdates++;
+    } else {
+      oldQualitySum += updateQuality;
+      oldNumUpdates++;
+    }
+
+    if (excessWidth <= 0 || current.depth > maxDepth) {
+      if (zmdpDebugLevelG >= 1) {
+        printf("  trialRecurse: depth=%d excessWidth=%g (terminating)\n",
+         current.depth, excessWidth);
+        printf("  trialRecurse: s=%s\n", sparseRep(current.cn->s).c_str());
+      }
+      continue;
+    }
+
+    // recurse to successor
+    if(-1 == r.maxPrioOutcome)
+      continue;
+    double obsProb = current.cn->Q[r.maxUBAction].outcomes[r.maxPrioOutcome]->obsProb;
+    double weight = problem->getDiscount() * obsProb;
+    double nextLogOcc = current.logOcc + log(weight);
+    if (zmdpDebugLevelG >= 1) {
+      printf("  trialRecurse recursing from: s=%s with action=%d outcome=%d\n", sparseRep(current.cn->s).c_str(), r.maxUBAction, r.maxPrioOutcome);
+    }
+
+    // Calculate the new state to do trial recurse on
+    trialRecurseStackFRTPD new_state;
+    new_state.cn = current.cn->Q[r.maxUBAction].outcomes[r.maxPrioOutcome]->nextState;
+    new_state.logOcc = nextLogOcc;
+    new_state.depth = current.depth + 1;
+    // Put new state on the call stack
+    callStack.push(new_state);
+    // Put current state on the update stack
+    updateStack.push(current.cn);
+
+    // If the stop flag is set outside the object, break
+    if(stop) break;
+    elapsed = timevalToSeconds(getTime())-startTime;
+  }
+
+  while(!updateStack.empty()) {
+    FRTDPUpdateResult r;
+    update(*updateStack.top(), r);
+    updateStack.pop();
+  }
+//  trialRecurse(cn,
+//	       /* logOcc = */ log(1.0),
+//	       /* depth = */ 0);
 
   double updateQualityDiff;
   if (0 == oldQualitySum) {
@@ -220,6 +339,39 @@ bool FRTDP::doTrial(MDPNode& cn)
   numTrials++;
 
   return (cn.ubVal - cn.lbVal < targetPrecision);
+}
+
+// Special version that follos a predefined path of actions/outcomes
+void FRTDP::doTrialFixed(MDPNode& cn, std::vector<int> actions, std::vector<int> outcomes)
+{
+  if (zmdpDebugLevelG >= 1) {
+    printf("-*- doTrialFixed: trial %d\n", (numTrials+1));
+  }
+
+  stack<MDPNode*> updateStack;
+  MDPNode *current = &cn;
+  for(size_t i = 0; i < actions.size(); i++) {
+    FRTDPUpdateResult r;
+    update(*current, r);
+
+    if (zmdpDebugLevelG >= 1) {
+      printf("-*-   checking: %s\n", sparseRep(current->s).c_str());
+    }
+    // Calculate the new state to do trial recurse on
+    MDPEdge *edge = current->Q[actions[i]].outcomes[outcomes[i]];
+    // Check the outcome is valid
+    if(edge != NULL) {
+      current = edge->nextState;
+      // Put current state on the update stack
+      updateStack.push(current);
+    }
+  }
+
+  while(!updateStack.empty()) {
+    FRTDPUpdateResult r;
+    update(*updateStack.top(), r);
+    updateStack.pop();
+  }
 }
 
 void FRTDP::derivedClassInit(void)
